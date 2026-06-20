@@ -157,19 +157,15 @@ def extract_memories_background(
     supabase_key: str | None,
 ):
     """Arka planda hafıza çıkarır ve Supabase'e kaydeder."""
-    logger.info(f"Hafiza extraction basladi: user_id={user_id}, supabase_url={bool(supabase_url)}, supabase_key={bool(supabase_key)}")
+    logger.info(f"Hafiza extraction basladi: user_id={user_id}")
     
     if not client:
-        logger.warning("Hafiza: client yok")
         return
     if not user_id:
-        logger.warning("Hafiza: user_id yok")
         return
     if not supabase_url:
-        logger.warning("Hafiza: SUPABASE_URL yok")
         return
     if not supabase_key:
-        logger.warning("Hafiza: SUPABASE_SERVICE_KEY yok")
         return
 
     try:
@@ -186,18 +182,14 @@ def extract_memories_background(
         )
 
         raw = response.content[0].text.strip()
-        # Markdown code block varsa temizle
         raw = raw.replace("```json", "").replace("```", "").strip()
-        logger.info(f"Hafiza AI cevabi: {raw}")
         result = json.loads(raw)
 
         if not result.get("should_update"):
-            logger.info("Hafiza: guncelleme gerekmiyor")
             return
 
         new_memories = result.get("memories", [])
         if not new_memories:
-            logger.info("Hafiza: bos memories listesi")
             return
 
         # Mevcut hafızayı güncelle (aynı key varsa üzerine yaz)
