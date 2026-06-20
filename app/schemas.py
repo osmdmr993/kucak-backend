@@ -8,6 +8,9 @@ class ChatMessage(BaseModel):
 
 
 class MotherProfile(BaseModel):
+    # Kimlik (hafıza güncellemesi için)
+    user_id: Optional[str] = None
+
     # Temel bilgiler
     name: Optional[str] = None
     city: Optional[str] = None
@@ -29,6 +32,7 @@ class MotherProfile(BaseModel):
     allergies: list[str] = Field(default_factory=list)
     has_gestational_diabetes: bool = False
     has_other_conditions: Optional[str] = None
+    memories: list[dict] = Field(default_factory=list)
 
 
 class ChatRequest(BaseModel):
