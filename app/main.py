@@ -81,10 +81,13 @@ Kaydedilmemesi gereken bilgiler:
 - Genel beslenme soruları
 - Zaten profilde olan bilgiler
 
-SADECE JSON formatında yanıt ver, başka hiçbir şey yazma:
-{"should_update": false}
-veya
-{"should_update": true, "memories": [{"key": "benzersiz_anahtar", "value": "bilgi", "date": "YYYY-MM-DD"}]}
+YANITI SADECE VE SADECE HAM JSON OLARAK VER. Başka hiçbir şey yazma. Markdown kullanma. Backtick kullanma.
+
+Güncelleme gerekmiyorsa tam olarak şunu yaz:
+{{"should_update": false}}
+
+Güncelleme gerekiyorsa tam olarak şunu yaz:
+{{"should_update": true, "memories": [{{"key": "benzersiz_anahtar", "value": "bilgi", "date": "YYYY-MM-DD"}}]}}
 
 Mevcut hafıza: {current_memories}
 Anne mesajı: {user_message}
