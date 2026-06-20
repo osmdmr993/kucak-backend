@@ -1,7 +1,5 @@
 import os
-import json
 import logging
-import asyncio
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,7 +16,7 @@ logger = logging.getLogger("kucak")
 
 API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 if not API_KEY:
-    logger.warning("ANTHROPIC_API_KEY tanimli degil.")
+    logger.warning("ANTHROPIC_API_KEY tanımlı değil.")
 
 client = Anthropic(api_key=API_KEY) if API_KEY else None
 
@@ -35,60 +33,33 @@ app.add_middleware(
 
 RESPOND_TOOL = {
     "name": "respond_to_mother",
-    "description": "Anneye verilecek cevabi ve sohbet arayuzu icin yapilandirilmis alanlari uretir.",
+    "description": "Anneye verilecek cevabı ve sohbet arayüzü için yapılandırılmış alanları üretir.",
     "input_schema": {
         "type": "object",
         "properties": {
             "answer_text": {
                 "type": "string",
-                "description": "Anneye gosterilecek asil cevap metni.",
+                "description": "Anneye gösterilecek asıl cevap metni.",
             },
             "quick_replies": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "0-4 arasi, annenin tiklayabilecegi kisa hizli yanit secenegi. Uygun degilse bos liste.",
+                "description": "0-4 arası, annenin tıklayabileceği kısa hızlı yanıt seçeneği. Uygun değilse boş liste.",
                 "maxItems": 4,
             },
             "safety_flag": {
                 "type": "string",
                 "enum": ["normal", "dikkat", "acil"],
-                "description": "normal: siradan soru. dikkat: hafif uyari. acil: 112/doktor yonlendirmesi.",
+                "description": "normal: sıradan soru. dikkat: hafif uyarı. acil: 112/doktor yönlendirmesi.",
             },
             "topic_category": {
                 "type": "string",
-                "description": "Konunun kisa kategorisi, orn. 'bitkisel_urun', 'alerji', 'ek_gida', 'ruhsal'.",
+                "description": "Konunun kısa kategorisi, örn. 'bitkisel_urun', 'alerji', 'ek_gida', 'ruhsal'.",
             },
         },
         "required": ["answer_text", "quick_replies", "safety_flag", "topic_category"],
     },
 }
-
-MEMORY_EXTRACTION_PROMPT = """Sen bir hafıza çıkarma asistanısın. Sana bir anne ile Kucak AI arasındaki son konuşma mesajı ve mevcut hafıza listesi verilecek.
-
-Görevin: Bu konuşmadan, annenin veya bebeğinin durumunu gelecekte de bilinmesi gereken ÖNEMLİ bir bilgi var mı? Varsa çıkar.
-
-Kaydedilmesi gereken bilgiler:
-- Gebelik haftası değişikliği ("32. haftaya girdim")
-- Bebeğin yaşı güncellenmesi ("bebeğim 6 aylık oldu")
-- Ek gıdaya geçiş, emzirme durumu değişimi
-- Yeni sağlık durumu (demir eksikliği, reflü, kolik vb.)
-- Kullandığı takviyeler/ilaçlar
-- Bebekte yeni alerji/hassasiyet tespiti
-- Doğum gerçekleşti (hamilelikten doğum sonrasına geçiş)
-
-Kaydedilmemesi gereken bilgiler:
-- Günlük sorular ("bugün ne yemeliyim")
-- Genel beslenme soruları
-- Zaten profilde olan bilgiler
-
-SADECE JSON formatında yanıt ver, başka hiçbir şey yazma:
-{"should_update": false}
-veya
-{"should_update": true, "memories": [{"key": "benzersiz_anahtar", "value": "bilgi", "date": "YYYY-MM-DD"}]}
-
-Mevcut hafıza: {current_memories}
-Anne mesajı: {user_message}
-AI cevabı: {ai_answer}"""
 
 
 def build_profile_block(profile: MotherProfile | None) -> str:
@@ -131,95 +102,9 @@ def build_profile_block(profile: MotherProfile | None) -> str:
     if profile.has_other_conditions:
         parts.append(f"Diğer özel durum: {profile.has_other_conditions}.")
 
-    # Hafıza bloğu
-    if profile.memories:
-        memory_lines = []
-        for m in profile.memories:
-            date_str = f" ({m.get('date', '')})" if m.get('date') else ""
-            memory_lines.append(f"- {m.get('value', '')}{date_str}")
-        if memory_lines:
-            parts.append("\nAnne hakkında daha önce öğrenilen bilgiler:\n" + "\n".join(memory_lines))
-
     if not parts:
         return ""
     return "\n\n<anne_profili>\n" + "\n".join(parts) + "\n</anne_profili>"
-
-
-def extract_memories_background(
-    user_message: str,
-    ai_answer: str,
-    current_memories: list,
-    user_id: str | None,
-    supabase_url: str | None,
-    supabase_key: str | None,
-):
-    """Arka planda hafıza çıkarır ve Supabase'e kaydeder."""
-    logger.info(f"Hafiza extraction basladi: user_id={user_id}, supabase_url={bool(supabase_url)}, supabase_key={bool(supabase_key)}")
-    
-    if not client:
-        logger.warning("Hafiza: client yok")
-        return
-    if not user_id:
-        logger.warning("Hafiza: user_id yok")
-        return
-    if not supabase_url:
-        logger.warning("Hafiza: SUPABASE_URL yok")
-        return
-    if not supabase_key:
-        logger.warning("Hafiza: SUPABASE_SERVICE_KEY yok")
-        return
-
-    try:
-        prompt = MEMORY_EXTRACTION_PROMPT.format(
-            current_memories=json.dumps(current_memories, ensure_ascii=False),
-            user_message=user_message,
-            ai_answer=ai_answer,
-        )
-
-        response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=300,
-            messages=[{"role": "user", "content": prompt}],
-        )
-
-        raw = response.content[0].text.strip()
-        logger.info(f"Hafiza AI cevabi: {raw}")
-        result = json.loads(raw)
-
-        if not result.get("should_update"):
-            logger.info("Hafiza: guncelleme gerekmiyor")
-            return
-
-        new_memories = result.get("memories", [])
-        if not new_memories:
-            logger.info("Hafiza: bos memories listesi")
-            return
-
-        # Mevcut hafızayı güncelle (aynı key varsa üzerine yaz)
-        updated = {m["key"]: m for m in current_memories}
-        for nm in new_memories:
-            updated[nm["key"]] = nm
-        final_memories = list(updated.values())
-
-        # Supabase'e kaydet (REST API ile)
-        import urllib.request
-        data = json.dumps({"memories": final_memories}).encode("utf-8")
-        req = urllib.request.Request(
-            f"{supabase_url}/rest/v1/profiles?user_id=eq.{user_id}",
-            data=data,
-            method="PATCH",
-            headers={
-                "apikey": supabase_key,
-                "Authorization": f"Bearer {supabase_key}",
-                "Content-Type": "application/json",
-                "Prefer": "return=minimal",
-            },
-        )
-        resp = urllib.request.urlopen(req, timeout=5)
-        logger.info(f"Hafiza guncellendi: user_id={user_id}, yeni_bilgi={len(new_memories)}, http={resp.status}")
-
-    except Exception as e:
-        logger.error(f"Hafiza extraction hatasi: {type(e).__name__}: {e}")
 
 
 @app.get("/")
@@ -230,7 +115,7 @@ def health_check():
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
     if client is None:
-        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY tanimli degil.")
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY tanımlı değil.")
 
     system = SYSTEM_PROMPT + build_profile_block(request.profile)
 
@@ -238,46 +123,25 @@ def chat(request: ChatRequest):
     messages.append({"role": "user", "content": request.message})
 
     try:
-        response = client.beta.prompt_caching.messages.create(
+        response = client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=1000,
-            system=[
-                {
-                    "type": "text",
-                    "text": system,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
+            system=system,
             messages=messages,
             tools=[RESPOND_TOOL],
             tool_choice={"type": "tool", "name": "respond_to_mother"},
         )
     except APIError as e:
-        logger.error(f"Anthropic API hatasi: {e}")
-        raise HTTPException(status_code=502, detail=f"AI servisinden cevap alinamadi: {e}")
+        logger.error(f"Anthropic API hatası: {e}")
+        raise HTTPException(status_code=502, detail=f"AI servisinden cevap alınamadı: {e}")
 
     tool_use_block = next((b for b in response.content if b.type == "tool_use"), None)
     if tool_use_block is None:
-        raise HTTPException(status_code=502, detail="Model yapilandirilmis bir cevap uretmedi.")
+        raise HTTPException(status_code=502, detail="Model yapılandırılmış bir cevap üretmedi.")
 
     data = tool_use_block.input
-    ai_answer = data.get("answer_text", "")
-
-    # Arka planda hafıza çıkar (ana cevabı bloke etmez)
-    supabase_url = os.environ.get("SUPABASE_URL")
-    supabase_key = os.environ.get("SUPABASE_SERVICE_KEY")
-    current_memories = request.profile.memories if request.profile and request.profile.memories else []
-    user_id = request.profile.user_id if request.profile else None
-
-    import threading
-    threading.Thread(
-        target=extract_memories_background,
-        args=(request.message, ai_answer, current_memories, user_id, supabase_url, supabase_key),
-        daemon=True,
-    ).start()
-
     return ChatResponse(
-        answer=ai_answer,
+        answer=data.get("answer_text", ""),
         quick_replies=data.get("quick_replies", []),
         safety_flag=data.get("safety_flag", "normal"),
         topic_category=data.get("topic_category", "genel"),
