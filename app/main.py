@@ -183,6 +183,8 @@ def extract_memories_background(
         )
 
         raw = response.content[0].text.strip()
+        # Markdown code block varsa temizle
+        raw = raw.replace("```json", "").replace("```", "").strip()
         logger.info(f"Hafiza AI cevabi: {raw}")
         result = json.loads(raw)
 
