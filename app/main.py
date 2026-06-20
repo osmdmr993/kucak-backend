@@ -123,10 +123,16 @@ def chat(request: ChatRequest):
     messages.append({"role": "user", "content": request.message})
 
     try:
-        response = client.messages.create(
+        response = client.beta.prompt_caching.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=1000,
-            system=system,
+            system=[
+                {
+                    "type": "text",
+                    "text": system,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
             messages=messages,
             tools=[RESPOND_TOOL],
             tool_choice={"type": "tool", "name": "respond_to_mother"},
