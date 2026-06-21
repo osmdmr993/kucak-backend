@@ -221,13 +221,22 @@ def extract_memories_background(
 
 
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
+SMTP_HOST = "smtp.resend.com"
+SMTP_PORT = 465
+SMTP_USER = "resend"
+SMTP_PASS = os.environ.get("RESEND_API_KEY")  # Resend SMTP şifresi API key'dir
 
 
 def send_welcome_email(name: str, email: str):
     """Yeni kullanıcıya hoşgeldin emaili gönder."""
-    if not RESEND_API_KEY:
+    if not SMTP_PASS:
         logger.warning("RESEND_API_KEY tanımlı değil, hoşgeldin emaili gönderilemiyor.")
         return
+
+    import smtplib
+    import ssl
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
 
     first_name = name.split()[0] if name else "Sevgili anne"
 
@@ -244,16 +253,13 @@ def send_welcome_email(name: str, email: str):
         <div style="padding: 32px;">
           <h2 style="color: #173404; font-size: 20px;">Hoş geldin, {first_name}! 🤱</h2>
           <p style="color: #412402; line-height: 1.7;">Kucak ailesine katıldığın için çok mutluyuz. Artık hamilelik ve bebeğinle ilgili her beslenme sorusunu bana sorabilirsin — 7/24 buradayım.</p>
-
           <div style="background: #EAF3DE; border-radius: 12px; padding: 20px; margin: 24px 0;">
             <h3 style="color: #27500A; font-size: 16px; margin: 0 0 12px;">Başlamak için birkaç ipucu:</h3>
             <p style="color: #173404; margin: 8px 0; font-size: 14px;">✓ Hamilelik haftanı veya bebeğinin yaşını söyle — sana özel cevap vereyim.</p>
             <p style="color: #173404; margin: 8px 0; font-size: 14px;">✓ Yemek tarifleri, takviye soruları, ek gıda rehberliği — her şeyi sorabilirsin.</p>
             <p style="color: #173404; margin: 8px 0; font-size: 14px;">✓ Sohbetlerimizi hatırlıyorum — her seferinde sıfırdan başlamana gerek yok.</p>
           </div>
-
           <p style="color: #412402; line-height: 1.7;">İlk sorunla başlamaya hazır mısın? Uygulamayı aç ve yaz! 💬</p>
-
           <p style="color: #854F0B; font-size: 13px; margin-top: 32px;">Soruların için: <a href="mailto:destek@kucak.app" style="color: #c2607a;">destek@kucak.app</a></p>
         </div>
         <div style="background: #FAEEDA; padding: 16px; text-align: center;">
@@ -265,21 +271,17 @@ def send_welcome_email(name: str, email: str):
     """
 
     try:
-        req = urllib.request.Request(
-            "https://api.resend.com/emails",
-            data=json.dumps({
-                "from": "Kucak <noreply@kucak.app>",
-                "to": [email],
-                "subject": f"Hoş geldin, {first_name}! 🤱",
-                "html": html_content,
-            }).encode("utf-8"),
-            method="POST",
-            headers={
-                "Authorization": f"Bearer {RESEND_API_KEY}",
-                "Content-Type": "application/json",
-            },
-        )
-        urllib.request.urlopen(req, timeout=10)
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = f"Hoş geldin, {first_name}! 🤱"
+        msg["From"] = "Kucak <noreply@kucak.app>"
+        msg["To"] = email
+        msg.attach(MIMEText(html_content, "html", "utf-8"))
+
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=context) as server:
+            server.login(SMTP_USER, SMTP_PASS)
+            server.sendmail("noreply@kucak.app", email, msg.as_string())
+
         logger.info(f"Hoşgeldin emaili gönderildi: {email}")
     except Exception as e:
         logger.warning(f"Hoşgeldin emaili gönderilemedi: {e}")
