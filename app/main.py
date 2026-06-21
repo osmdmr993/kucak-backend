@@ -4,7 +4,7 @@ import logging
 import asyncio
 import urllib.request
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from anthropic import Anthropic, APIError
 from dotenv import load_dotenv
@@ -285,6 +285,51 @@ def send_welcome_email(name: str, email: str):
         logger.info(f"Hoşgeldin emaili gönderildi: {email}")
     except Exception as e:
         logger.warning(f"Hoşgeldin emaili gönderilemedi: {e}")
+
+
+@app.post("/webhook/revenuecat")
+async def revenuecat_webhook(request: Request):
+    """RevenueCat webhook — deneme başlangıcı ve iptal olaylarını işle."""
+    try:
+        body = await request.json()
+        event = body.get("event", {})
+        event_type = event.get("type", "")
+        app_user_id = event.get("app_user_id", "")
+
+        logger.info(f"RevenueCat webhook: {event_type} — user: {app_user_id}")
+
+        supabase_url = os.environ.get("SUPABASE_URL")
+        supabase_key = os.environ.get("SUPABASE_SERVICE_KEY")
+
+        if event_type == "INITIAL_PURCHASE" and app_user_id:
+            # Deneme başlangıç tarihini kaydet
+            import threading
+            def save_trial():
+                try:
+                    from datetime import datetime, timezone
+                    now = datetime.now(timezone.utc).isoformat()
+                    req = urllib.request.Request(
+                        f"{supabase_url}/rest/v1/profiles?user_id=eq.{app_user_id}",
+                        data=json.dumps({"trial_started_at": now}).encode("utf-8"),
+                        method="PATCH",
+                        headers={
+                            "apikey": supabase_key,
+                            "Authorization": f"Bearer {supabase_key}",
+                            "Content-Type": "application/json",
+                            "Prefer": "return=minimal",
+                        },
+                    )
+                    urllib.request.urlopen(req, timeout=10)
+                    logger.info(f"Trial başlangıcı kaydedildi: {app_user_id}")
+                except Exception as e:
+                    logger.error(f"Trial kayıt hatası: {e}")
+            threading.Thread(target=save_trial, daemon=True).start()
+
+        return {"status": "ok"}
+
+    except Exception as e:
+        logger.error(f"Webhook hatası: {e}")
+        return {"status": "error"}
 
 
 @app.get("/")
