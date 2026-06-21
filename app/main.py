@@ -362,3 +362,155 @@ def chat(request: ChatRequest):
         safety_flag=data.get("safety_flag", "normal"),
         topic_category=data.get("topic_category", "genel"),
     )
+
+
+@app.post("/referral/generate")
+def generate_referral(data: dict):
+    """Kullanıcı için referral kodu oluştur."""
+    user_id = data.get("user_id")
+    name = data.get("name", "user")
+    
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id gerekli")
+    
+    supabase_url = os.environ.get("SUPABASE_URL")
+    supabase_key = os.environ.get("SUPABASE_SERVICE_KEY")
+    
+    try:
+        # Mevcut kod var mı kontrol et
+        req = urllib.request.Request(
+            f"{supabase_url}/rest/v1/profiles?user_id=eq.{user_id}&select=referral_code",
+            method="GET",
+            headers={
+                "apikey": supabase_key,
+                "Authorization": f"Bearer {supabase_key}",
+            },
+        )
+        res = urllib.request.urlopen(req, timeout=10)
+        profiles = json.loads(res.read())
+        
+        if profiles and profiles[0].get("referral_code"):
+            return {"referral_code": profiles[0]["referral_code"]}
+        
+        # Yeni kod oluştur
+        name_part = ''.join(filter(str.isalpha, name)).upper()[:4].ljust(4, 'K')
+        import random
+        code = f"{name_part}{random.randint(1000, 9999)}"
+        
+        # Kaydet
+        req = urllib.request.Request(
+            f"{supabase_url}/rest/v1/profiles?user_id=eq.{user_id}",
+            data=json.dumps({"referral_code": code}).encode("utf-8"),
+            method="PATCH",
+            headers={
+                "apikey": supabase_key,
+                "Authorization": f"Bearer {supabase_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        urllib.request.urlopen(req, timeout=10)
+        
+        return {"referral_code": code}
+    except Exception as e:
+        logger.error(f"Referral kodu oluşturulamadı: {e}")
+        raise HTTPException(status_code=500, detail="Referral kodu oluşturulamadı")
+
+
+@app.post("/referral/apply")
+def apply_referral(data: dict):
+    """Referral kodunu uygula — her iki kullanıcıya da bonus ekle."""
+    user_id = data.get("user_id")
+    code = data.get("code", "").strip().upper()
+    
+    if not user_id or not code:
+        raise HTTPException(status_code=400, detail="user_id ve code gerekli")
+    
+    supabase_url = os.environ.get("SUPABASE_URL")
+    supabase_key = os.environ.get("SUPABASE_SERVICE_KEY")
+    
+    try:
+        # Referral kodunu bul
+        req = urllib.request.Request(
+            f"{supabase_url}/rest/v1/profiles?referral_code=eq.{code}&select=user_id,bonus_days",
+            method="GET",
+            headers={
+                "apikey": supabase_key,
+                "Authorization": f"Bearer {supabase_key}",
+            },
+        )
+        res = urllib.request.urlopen(req, timeout=10)
+        referrers = json.loads(res.read())
+        
+        if not referrers:
+            return {"status": "not_found", "message": "Geçersiz referral kodu"}
+        
+        referrer = referrers[0]
+        referrer_id = referrer["user_id"]
+        
+        if referrer_id == user_id:
+            return {"status": "self_referral", "message": "Kendi kodunu kullanamazsın"}
+        
+        # Kendi zaten kullanmış mı kontrol et
+        req = urllib.request.Request(
+            f"{supabase_url}/rest/v1/profiles?user_id=eq.{user_id}&select=referred_by",
+            method="GET",
+            headers={
+                "apikey": supabase_key,
+                "Authorization": f"Bearer {supabase_key}",
+            },
+        )
+        res = urllib.request.urlopen(req, timeout=10)
+        my_profile = json.loads(res.read())
+        
+        if my_profile and my_profile[0].get("referred_by"):
+            return {"status": "already_used", "message": "Zaten bir referral kodu kullandın"}
+        
+        # Yeni kullanıcıya +3 gün bonus
+        req = urllib.request.Request(
+            f"{supabase_url}/rest/v1/profiles?user_id=eq.{user_id}",
+            data=json.dumps({"referred_by": code, "bonus_days": 3}).encode("utf-8"),
+            method="PATCH",
+            headers={
+                "apikey": supabase_key,
+                "Authorization": f"Bearer {supabase_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        urllib.request.urlopen(req, timeout=10)
+        
+        # Referrer'a +7 gün bonus
+        new_bonus = (referrer.get("bonus_days") or 0) + 7
+        req = urllib.request.Request(
+            f"{supabase_url}/rest/v1/profiles?user_id=eq.{referrer_id}",
+            data=json.dumps({"bonus_days": new_bonus}).encode("utf-8"),
+            method="PATCH",
+            headers={
+                "apikey": supabase_key,
+                "Authorization": f"Bearer {supabase_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        urllib.request.urlopen(req, timeout=10)
+        
+        # Referrals tablosuna kaydet
+        req = urllib.request.Request(
+            f"{supabase_url}/rest/v1/referrals",
+            data=json.dumps({
+                "referrer_user_id": referrer_id,
+                "referred_user_id": user_id,
+            }).encode("utf-8"),
+            method="POST",
+            headers={
+                "apikey": supabase_key,
+                "Authorization": f"Bearer {supabase_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        urllib.request.urlopen(req, timeout=10)
+        
+        logger.info(f"Referral uygulandı: {code} → {user_id}, referrer: {referrer_id}")
+        return {"status": "success", "message": "Referral kodu uygulandı! +3 gün bonus kazandın.", "bonus_days": 3}
+    
+    except Exception as e:
+        logger.error(f"Referral uygulanamadı: {e}")
+        raise HTTPException(status_code=500, detail="Referral uygulanamadı")
