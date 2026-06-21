@@ -39,6 +39,7 @@ class ChatRequest(BaseModel):
     message: str
     conversation_history: list[ChatMessage] = Field(default_factory=list)
     profile: Optional[MotherProfile] = None
+    image_base64: Optional[str] = None
 
 
 class ChatResponse(BaseModel):

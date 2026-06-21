@@ -315,7 +315,27 @@ def chat(request: ChatRequest):
     system = SYSTEM_PROMPT + build_profile_block(request.profile)
 
     messages = [{"role": m.role, "content": m.content} for m in request.conversation_history]
-    messages.append({"role": "user", "content": request.message})
+    # Mesajı oluştur — fotoğraf varsa image içerikli mesaj, yoksa text
+    if request.image_base64:
+        messages.append({
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": request.image_base64,
+                    },
+                },
+                {
+                    "type": "text",
+                    "text": request.message,
+                },
+            ],
+        })
+    else:
+        messages.append({"role": "user", "content": request.message})
 
     try:
         response = client.beta.prompt_caching.messages.create(
