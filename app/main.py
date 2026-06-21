@@ -359,7 +359,10 @@ def chat(request: ChatRequest):
 
     system = SYSTEM_PROMPT + build_profile_block(request.profile)
 
-    messages = [{"role": m.role, "content": m.content} for m in request.conversation_history]
+    # Son 10 mesajla sınırla — maliyet kontrolü
+    history = request.conversation_history[-10:]
+    messages = [{"role": m.role, "content": m.content} for m in history]
+
     # Mesajı oluştur — fotoğraf varsa image içerikli mesaj, yoksa text
     if request.image_base64:
         messages.append({
@@ -385,7 +388,7 @@ def chat(request: ChatRequest):
     try:
         response = client.beta.prompt_caching.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=1000,
+            max_tokens=800,
             system=[
                 {
                     "type": "text",
@@ -408,18 +411,20 @@ def chat(request: ChatRequest):
     data = tool_use_block.input
     ai_answer = data.get("answer_text", "")
 
-    # Arka planda hafıza çıkar (ana cevabı bloke etmez)
+    # Arka planda hafıza çıkar — her 3 mesajda bir (maliyet optimizasyonu)
     supabase_url = os.environ.get("SUPABASE_URL")
     supabase_key = os.environ.get("SUPABASE_SERVICE_KEY")
     current_memories = request.profile.memories if request.profile and request.profile.memories else []
     user_id = request.profile.user_id if request.profile else None
+    msg_count = len(request.conversation_history)
 
-    import threading
-    threading.Thread(
-        target=extract_memories_background,
-        args=(request.message, ai_answer, current_memories, user_id, supabase_url, supabase_key),
-        daemon=True,
-    ).start()
+    if msg_count % 3 == 0:
+        import threading
+        threading.Thread(
+            target=extract_memories_background,
+            args=(request.message, ai_answer, current_memories, user_id, supabase_url, supabase_key),
+            daemon=True,
+        ).start()
 
     return ChatResponse(
         answer=ai_answer,
