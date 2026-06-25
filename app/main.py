@@ -2,14 +2,14 @@ import os
 import json
 import logging
 import asyncio
-import urllib.request
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from anthropic import Anthropic, APIError
 from dotenv import load_dotenv
 
 from app.schemas import ChatRequest, ChatResponse, MotherProfile
+from pydantic import BaseModel
 from app.system_prompt import SYSTEM_PROMPT
 
 load_dotenv()
@@ -221,22 +221,13 @@ def extract_memories_background(
 
 
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
-SMTP_HOST = "smtp.resend.com"
-SMTP_PORT = 465
-SMTP_USER = "resend"
-SMTP_PASS = os.environ.get("RESEND_API_KEY")  # Resend SMTP şifresi API key'dir
 
 
 def send_welcome_email(name: str, email: str):
     """Yeni kullanıcıya hoşgeldin emaili gönder."""
-    if not SMTP_PASS:
+    if not RESEND_API_KEY:
         logger.warning("RESEND_API_KEY tanımlı değil, hoşgeldin emaili gönderilemiyor.")
         return
-
-    import smtplib
-    import ssl
-    from email.mime.multipart import MIMEMultipart
-    from email.mime.text import MIMEText
 
     first_name = name.split()[0] if name else "Sevgili anne"
 
@@ -253,13 +244,16 @@ def send_welcome_email(name: str, email: str):
         <div style="padding: 32px;">
           <h2 style="color: #173404; font-size: 20px;">Hoş geldin, {first_name}! 🤱</h2>
           <p style="color: #412402; line-height: 1.7;">Kucak ailesine katıldığın için çok mutluyuz. Artık hamilelik ve bebeğinle ilgili her beslenme sorusunu bana sorabilirsin — 7/24 buradayım.</p>
+
           <div style="background: #EAF3DE; border-radius: 12px; padding: 20px; margin: 24px 0;">
             <h3 style="color: #27500A; font-size: 16px; margin: 0 0 12px;">Başlamak için birkaç ipucu:</h3>
             <p style="color: #173404; margin: 8px 0; font-size: 14px;">✓ Hamilelik haftanı veya bebeğinin yaşını söyle — sana özel cevap vereyim.</p>
             <p style="color: #173404; margin: 8px 0; font-size: 14px;">✓ Yemek tarifleri, takviye soruları, ek gıda rehberliği — her şeyi sorabilirsin.</p>
             <p style="color: #173404; margin: 8px 0; font-size: 14px;">✓ Sohbetlerimizi hatırlıyorum — her seferinde sıfırdan başlamana gerek yok.</p>
           </div>
+
           <p style="color: #412402; line-height: 1.7;">İlk sorunla başlamaya hazır mısın? Uygulamayı aç ve yaz! 💬</p>
+
           <p style="color: #854F0B; font-size: 13px; margin-top: 32px;">Soruların için: <a href="mailto:destek@kucak.app" style="color: #c2607a;">destek@kucak.app</a></p>
         </div>
         <div style="background: #FAEEDA; padding: 16px; text-align: center;">
@@ -271,65 +265,24 @@ def send_welcome_email(name: str, email: str):
     """
 
     try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"Hoş geldin, {first_name}! 🤱"
-        msg["From"] = "Kucak <noreply@kucak.app>"
-        msg["To"] = email
-        msg.attach(MIMEText(html_content, "html", "utf-8"))
-
-        context = ssl.create_default_context()
-        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=context) as server:
-            server.login(SMTP_USER, SMTP_PASS)
-            server.sendmail("noreply@kucak.app", email, msg.as_string())
-
+        req = urllib.request.Request(
+            "https://api.resend.com/emails",
+            data=json.dumps({
+                "from": "Kucak <noreply@kucak.app>",
+                "to": [email],
+                "subject": f"Hoş geldin, {first_name}! 🤱",
+                "html": html_content,
+            }).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Content-Type": "application/json",
+            },
+        )
+        urllib.request.urlopen(req, timeout=10)
         logger.info(f"Hoşgeldin emaili gönderildi: {email}")
     except Exception as e:
         logger.warning(f"Hoşgeldin emaili gönderilemedi: {e}")
-
-
-@app.post("/webhook/revenuecat")
-async def revenuecat_webhook(request: Request):
-    """RevenueCat webhook — deneme başlangıcı ve iptal olaylarını işle."""
-    try:
-        body = await request.json()
-        event = body.get("event", {})
-        event_type = event.get("type", "")
-        app_user_id = event.get("app_user_id", "")
-
-        logger.info(f"RevenueCat webhook: {event_type} — user: {app_user_id}")
-
-        supabase_url = os.environ.get("SUPABASE_URL")
-        supabase_key = os.environ.get("SUPABASE_SERVICE_KEY")
-
-        if event_type == "INITIAL_PURCHASE" and app_user_id:
-            # Deneme başlangıç tarihini kaydet
-            import threading
-            def save_trial():
-                try:
-                    from datetime import datetime, timezone
-                    now = datetime.now(timezone.utc).isoformat()
-                    req = urllib.request.Request(
-                        f"{supabase_url}/rest/v1/profiles?user_id=eq.{app_user_id}",
-                        data=json.dumps({"trial_started_at": now}).encode("utf-8"),
-                        method="PATCH",
-                        headers={
-                            "apikey": supabase_key,
-                            "Authorization": f"Bearer {supabase_key}",
-                            "Content-Type": "application/json",
-                            "Prefer": "return=minimal",
-                        },
-                    )
-                    urllib.request.urlopen(req, timeout=10)
-                    logger.info(f"Trial başlangıcı kaydedildi: {app_user_id}")
-                except Exception as e:
-                    logger.error(f"Trial kayıt hatası: {e}")
-            threading.Thread(target=save_trial, daemon=True).start()
-
-        return {"status": "ok"}
-
-    except Exception as e:
-        logger.error(f"Webhook hatası: {e}")
-        return {"status": "error"}
 
 
 @app.get("/")
@@ -352,6 +305,65 @@ def profile_welcome(data: dict):
     return {"status": "ok"}
 
 
+class ImageAnalyzeRequest(BaseModel):
+    image_base64: str
+    mime_type: str = "image/jpeg"
+    profile: MotherProfile | None = None
+    conversation_history: list = []
+
+
+@app.post("/analyze-image")
+def analyze_image(request: ImageAnalyzeRequest):
+    if client is None:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY tanimli degil.")
+
+    system = SYSTEM_PROMPT + build_profile_block(request.profile)
+
+    # Kullanıcı mesajı: fotoğraf + analiz isteği
+    user_content = [
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": request.mime_type,
+                "data": request.image_base64,
+            },
+        },
+        {
+            "type": "text",
+            "text": "Bu ürün etiketini veya gıda fotoğrafını inceleyip benim ve bebeğim için uygun mu analiz et. Besin değerleri, içerik maddeleri ve olası riskler hakkında bilgi ver.",
+        },
+    ]
+
+    messages = [{"role": m["role"] if isinstance(m, dict) else m.role, "content": m["content"] if isinstance(m, dict) else m.content} for m in request.conversation_history]
+    messages.append({"role": "user", "content": user_content})
+
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1000,
+            system=system,
+            messages=messages,
+            tools=[RESPOND_TOOL],
+            tool_choice={"type": "tool", "name": "respond_to_mother"},
+        )
+    except APIError as e:
+        logger.error(f"Anthropic API hatasi (image): {e}")
+        raise HTTPException(status_code=502, detail=f"AI servisinden cevap alinamadi: {e}")
+
+    tool_use_block = next((b for b in response.content if b.type == "tool_use"), None)
+    if tool_use_block is None:
+        raise HTTPException(status_code=502, detail="Model yapilandirilmis bir cevap uretmedi.")
+
+    data = tool_use_block.input
+    return {
+        "answer": data.get("answer_text", ""),
+        "quick_replies": data.get("quick_replies", []),
+        "safety_flag": data.get("safety_flag", "normal"),
+        "topic_category": data.get("topic_category", "genel"),
+    }
+
+
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
     if client is None:
@@ -359,36 +371,13 @@ def chat(request: ChatRequest):
 
     system = SYSTEM_PROMPT + build_profile_block(request.profile)
 
-    # Son 10 mesajla sınırla — maliyet kontrolü
-    history = request.conversation_history[-10:]
-    messages = [{"role": m.role, "content": m.content} for m in history]
-
-    # Mesajı oluştur — fotoğraf varsa image içerikli mesaj, yoksa text
-    if request.image_base64:
-        messages.append({
-            "role": "user",
-            "content": [
-                {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "image/jpeg",
-                        "data": request.image_base64,
-                    },
-                },
-                {
-                    "type": "text",
-                    "text": request.message,
-                },
-            ],
-        })
-    else:
-        messages.append({"role": "user", "content": request.message})
+    messages = [{"role": m.role, "content": m.content} for m in request.conversation_history]
+    messages.append({"role": "user", "content": request.message})
 
     try:
         response = client.beta.prompt_caching.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=800,
+            max_tokens=1000,
             system=[
                 {
                     "type": "text",
@@ -411,20 +400,18 @@ def chat(request: ChatRequest):
     data = tool_use_block.input
     ai_answer = data.get("answer_text", "")
 
-    # Arka planda hafıza çıkar — her 3 mesajda bir (maliyet optimizasyonu)
+    # Arka planda hafıza çıkar (ana cevabı bloke etmez)
     supabase_url = os.environ.get("SUPABASE_URL")
     supabase_key = os.environ.get("SUPABASE_SERVICE_KEY")
     current_memories = request.profile.memories if request.profile and request.profile.memories else []
     user_id = request.profile.user_id if request.profile else None
-    msg_count = len(request.conversation_history)
 
-    if msg_count % 3 == 0:
-        import threading
-        threading.Thread(
-            target=extract_memories_background,
-            args=(request.message, ai_answer, current_memories, user_id, supabase_url, supabase_key),
-            daemon=True,
-        ).start()
+    import threading
+    threading.Thread(
+        target=extract_memories_background,
+        args=(request.message, ai_answer, current_memories, user_id, supabase_url, supabase_key),
+        daemon=True,
+    ).start()
 
     return ChatResponse(
         answer=ai_answer,
@@ -432,155 +419,3 @@ def chat(request: ChatRequest):
         safety_flag=data.get("safety_flag", "normal"),
         topic_category=data.get("topic_category", "genel"),
     )
-
-
-@app.post("/referral/generate")
-def generate_referral(data: dict):
-    """Kullanıcı için referral kodu oluştur."""
-    user_id = data.get("user_id")
-    name = data.get("name", "user")
-    
-    if not user_id:
-        raise HTTPException(status_code=400, detail="user_id gerekli")
-    
-    supabase_url = os.environ.get("SUPABASE_URL")
-    supabase_key = os.environ.get("SUPABASE_SERVICE_KEY")
-    
-    try:
-        # Mevcut kod var mı kontrol et
-        req = urllib.request.Request(
-            f"{supabase_url}/rest/v1/profiles?user_id=eq.{user_id}&select=referral_code",
-            method="GET",
-            headers={
-                "apikey": supabase_key,
-                "Authorization": f"Bearer {supabase_key}",
-            },
-        )
-        res = urllib.request.urlopen(req, timeout=10)
-        profiles = json.loads(res.read())
-        
-        if profiles and profiles[0].get("referral_code"):
-            return {"referral_code": profiles[0]["referral_code"]}
-        
-        # Yeni kod oluştur
-        name_part = ''.join(filter(str.isalpha, name)).upper()[:4].ljust(4, 'K')
-        import random
-        code = f"{name_part}{random.randint(1000, 9999)}"
-        
-        # Kaydet
-        req = urllib.request.Request(
-            f"{supabase_url}/rest/v1/profiles?user_id=eq.{user_id}",
-            data=json.dumps({"referral_code": code}).encode("utf-8"),
-            method="PATCH",
-            headers={
-                "apikey": supabase_key,
-                "Authorization": f"Bearer {supabase_key}",
-                "Content-Type": "application/json",
-            },
-        )
-        urllib.request.urlopen(req, timeout=10)
-        
-        return {"referral_code": code}
-    except Exception as e:
-        logger.error(f"Referral kodu oluşturulamadı: {e}")
-        raise HTTPException(status_code=500, detail="Referral kodu oluşturulamadı")
-
-
-@app.post("/referral/apply")
-def apply_referral(data: dict):
-    """Referral kodunu uygula — her iki kullanıcıya da bonus ekle."""
-    user_id = data.get("user_id")
-    code = data.get("code", "").strip().upper()
-    
-    if not user_id or not code:
-        raise HTTPException(status_code=400, detail="user_id ve code gerekli")
-    
-    supabase_url = os.environ.get("SUPABASE_URL")
-    supabase_key = os.environ.get("SUPABASE_SERVICE_KEY")
-    
-    try:
-        # Referral kodunu bul
-        req = urllib.request.Request(
-            f"{supabase_url}/rest/v1/profiles?referral_code=eq.{code}&select=user_id,bonus_days",
-            method="GET",
-            headers={
-                "apikey": supabase_key,
-                "Authorization": f"Bearer {supabase_key}",
-            },
-        )
-        res = urllib.request.urlopen(req, timeout=10)
-        referrers = json.loads(res.read())
-        
-        if not referrers:
-            return {"status": "not_found", "message": "Geçersiz referral kodu"}
-        
-        referrer = referrers[0]
-        referrer_id = referrer["user_id"]
-        
-        if referrer_id == user_id:
-            return {"status": "self_referral", "message": "Kendi kodunu kullanamazsın"}
-        
-        # Kendi zaten kullanmış mı kontrol et
-        req = urllib.request.Request(
-            f"{supabase_url}/rest/v1/profiles?user_id=eq.{user_id}&select=referred_by",
-            method="GET",
-            headers={
-                "apikey": supabase_key,
-                "Authorization": f"Bearer {supabase_key}",
-            },
-        )
-        res = urllib.request.urlopen(req, timeout=10)
-        my_profile = json.loads(res.read())
-        
-        if my_profile and my_profile[0].get("referred_by"):
-            return {"status": "already_used", "message": "Zaten bir referral kodu kullandın"}
-        
-        # Yeni kullanıcıya +3 gün bonus
-        req = urllib.request.Request(
-            f"{supabase_url}/rest/v1/profiles?user_id=eq.{user_id}",
-            data=json.dumps({"referred_by": code, "bonus_days": 3}).encode("utf-8"),
-            method="PATCH",
-            headers={
-                "apikey": supabase_key,
-                "Authorization": f"Bearer {supabase_key}",
-                "Content-Type": "application/json",
-            },
-        )
-        urllib.request.urlopen(req, timeout=10)
-        
-        # Referrer'a +7 gün bonus
-        new_bonus = (referrer.get("bonus_days") or 0) + 7
-        req = urllib.request.Request(
-            f"{supabase_url}/rest/v1/profiles?user_id=eq.{referrer_id}",
-            data=json.dumps({"bonus_days": new_bonus}).encode("utf-8"),
-            method="PATCH",
-            headers={
-                "apikey": supabase_key,
-                "Authorization": f"Bearer {supabase_key}",
-                "Content-Type": "application/json",
-            },
-        )
-        urllib.request.urlopen(req, timeout=10)
-        
-        # Referrals tablosuna kaydet
-        req = urllib.request.Request(
-            f"{supabase_url}/rest/v1/referrals",
-            data=json.dumps({
-                "referrer_user_id": referrer_id,
-                "referred_user_id": user_id,
-            }).encode("utf-8"),
-            method="POST",
-            headers={
-                "apikey": supabase_key,
-                "Authorization": f"Bearer {supabase_key}",
-                "Content-Type": "application/json",
-            },
-        )
-        urllib.request.urlopen(req, timeout=10)
-        
-        logger.info(f"Referral uygulandı: {code} → {user_id}, referrer: {referrer_id}")
-        return {"status": "success", "message": "Referral kodu uygulandı! +3 gün bonus kazandın.", "bonus_days": 3}
-    
-    except Exception as e:
-        logger.error(f"Referral uygulanamadı: {e}")
-        raise HTTPException(status_code=500, detail="Referral uygulanamadı")
