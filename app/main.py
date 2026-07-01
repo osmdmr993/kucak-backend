@@ -419,3 +419,88 @@ def chat(request: ChatRequest):
         safety_flag=data.get("safety_flag", "normal"),
         topic_category=data.get("topic_category", "genel"),
     )
+
+
+class ReferralGenerateRequest(BaseModel):
+    user_id: str
+
+class ReferralApplyRequest(BaseModel):
+    referrer_code: str
+    referred_user_id: str
+
+
+def generate_referral_code(user_id: str) -> str:
+    """Kullanıcı ID'sinden kısa referral kodu üret."""
+    import hashlib
+    hash_val = hashlib.md5(user_id.encode()).hexdigest()[:6].upper()
+    return hash_val
+
+
+@app.post("/referral/generate")
+def generate_referral(request: ReferralGenerateRequest):
+    """Kullanıcı için referral kodu üret."""
+    code = generate_referral_code(request.user_id)
+    return {"code": code, "user_id": request.user_id}
+
+
+@app.post("/referral/apply")
+def apply_referral(request: ReferralApplyRequest):
+    """Referral kodunu uygula ve Supabase'e kaydet."""
+    supabase_url = os.environ.get("SUPABASE_URL")
+    supabase_key = os.environ.get("SUPABASE_SERVICE_KEY")
+
+    if not supabase_url or not supabase_key:
+        raise HTTPException(status_code=500, detail="Supabase yapilandirilmamis.")
+
+    # Referral kodundan referrer user_id bul
+    # Tüm kullanıcıları çek, kodu eşleştir
+    try:
+        req = urllib.request.Request(
+            f"{supabase_url}/rest/v1/profiles?select=user_id",
+            headers={
+                "apikey": supabase_key,
+                "Authorization": f"Bearer {supabase_key}",
+            },
+        )
+        resp = urllib.request.urlopen(req, timeout=5)
+        profiles = json.loads(resp.read().decode())
+    except Exception as e:
+        logger.error(f"Profil listesi alinamadi: {e}")
+        raise HTTPException(status_code=502, detail="Profil listesi alinamadi.")
+
+    referrer_user_id = None
+    for profile in profiles:
+        uid = profile.get("user_id", "")
+        if generate_referral_code(uid) == request.referrer_code.upper():
+            referrer_user_id = uid
+            break
+
+    if not referrer_user_id:
+        raise HTTPException(status_code=404, detail="Gecersiz referral kodu.")
+
+    if referrer_user_id == request.referred_user_id:
+        raise HTTPException(status_code=400, detail="Kendi kodunuzu kullanamazsiniz.")
+
+    # Supabase'e kaydet
+    try:
+        data = json.dumps({
+            "referrer_user_id": referrer_user_id,
+            "referred_user_id": request.referred_user_id,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"{supabase_url}/rest/v1/referrals",
+            data=data,
+            method="POST",
+            headers={
+                "apikey": supabase_key,
+                "Authorization": f"Bearer {supabase_key}",
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal",
+            },
+        )
+        urllib.request.urlopen(req, timeout=5)
+        logger.info(f"Referral kaydedildi: {referrer_user_id} -> {request.referred_user_id}")
+        return {"status": "ok", "referrer_user_id": referrer_user_id}
+    except Exception as e:
+        logger.error(f"Referral kayit hatasi: {e}")
+        raise HTTPException(status_code=502, detail="Referral kaydedilemedi.")
