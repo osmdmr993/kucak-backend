@@ -453,25 +453,24 @@ def apply_referral(request: ReferralApplyRequest):
         raise HTTPException(status_code=500, detail="Supabase yapilandirilmamis.")
 
     # Referral kodundan referrer user_id bul
-    # auth.users tablosundan tüm kullanıcıları çek
+    # Tüm kullanıcıları çek, kodu eşleştir
     try:
         req = urllib.request.Request(
-            f"{supabase_url}/auth/v1/admin/users?per_page=1000",
+            f"{supabase_url}/rest/v1/profiles?select=user_id",
             headers={
                 "apikey": supabase_key,
                 "Authorization": f"Bearer {supabase_key}",
             },
         )
-        resp = urllib.request.urlopen(req, timeout=10)
-        result = json.loads(resp.read().decode())
-        users = result.get("users", [])
+        resp = urllib.request.urlopen(req, timeout=5)
+        profiles = json.loads(resp.read().decode())
     except Exception as e:
-        logger.error(f"Kullanici listesi alinamadi: {e}")
-        raise HTTPException(status_code=502, detail="Kullanici listesi alinamadi.")
+        logger.error(f"Profil listesi alinamadi: {e}")
+        raise HTTPException(status_code=502, detail="Profil listesi alinamadi.")
 
     referrer_user_id = None
-    for user in users:
-        uid = user.get("id", "")
+    for profile in profiles:
+        uid = profile.get("user_id", "")
         if generate_referral_code(uid) == request.referrer_code.upper():
             referrer_user_id = uid
             break
