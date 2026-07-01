@@ -466,7 +466,7 @@ def apply_referral(request: ReferralApplyRequest):
         profiles = json.loads(resp.read().decode())
     except Exception as e:
         logger.error(f"Profil listesi alinamadi: {e}")
-        raise HTTPException(status_code=502, detail="Profil listesi alinamadi.")
+        raise HTTPException(status_code=502, detail=f"Profil listesi alinamadi: {str(e)}")
 
     referrer_user_id = None
     for profile in profiles:
