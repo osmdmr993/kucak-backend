@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import asyncio
+import urllib.request
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
