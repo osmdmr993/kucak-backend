@@ -453,29 +453,28 @@ def apply_referral(request: ReferralApplyRequest):
     if not supabase_url or not supabase_key:
         raise HTTPException(status_code=500, detail="Supabase yapilandirilmamis.")
 
-    # Referral kodundan referrer user_id bul
-    # Tüm kullanıcıları çek, kodu eşleştir
+    # referral_code kolonuyla eşleşen user_id'yi bul
     try:
+        import urllib.parse
+        code_encoded = urllib.parse.quote(request.referrer_code.upper())
         req = urllib.request.Request(
-            f"{supabase_url}/rest/v1/profiles?select=user_id",
+            f"{supabase_url}/rest/v1/profiles?select=user_id&referral_code=eq.{code_encoded}&limit=1",
             headers={
                 "apikey": supabase_key,
                 "Authorization": f"Bearer {supabase_key}",
+                "Accept": "application/json",
             },
         )
-        resp = urllib.request.urlopen(req, timeout=5)
+        resp = urllib.request.urlopen(req, timeout=10)
         profiles = json.loads(resp.read().decode())
     except Exception as e:
         logger.error(f"Profil listesi alinamadi: {e}")
         raise HTTPException(status_code=502, detail=f"Profil listesi alinamadi: {str(e)}")
 
-    referrer_user_id = None
-    for profile in profiles:
-        uid = profile.get("user_id", "")
-        if generate_referral_code(uid) == request.referrer_code.upper():
-            referrer_user_id = uid
-            break
+    if not profiles:
+        raise HTTPException(status_code=404, detail="Gecersiz referral kodu.")
 
+    referrer_user_id = profiles[0].get("user_id", "")
     if not referrer_user_id:
         raise HTTPException(status_code=404, detail="Gecersiz referral kodu.")
 
