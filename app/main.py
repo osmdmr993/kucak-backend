@@ -439,8 +439,31 @@ def generate_referral_code(user_id: str) -> str:
 
 @app.post("/referral/generate")
 def generate_referral(request: ReferralGenerateRequest):
-    """Kullanıcı için referral kodu üret."""
+    """Kullanıcı için referral kodu üret ve Supabase'e kaydet."""
     code = generate_referral_code(request.user_id)
+    
+    supabase_url = os.environ.get("SUPABASE_URL")
+    supabase_key = os.environ.get("SUPABASE_SERVICE_KEY")
+    
+    if supabase_url and supabase_key:
+        try:
+            data = json.dumps({"referral_code": code}).encode("utf-8")
+            req = urllib.request.Request(
+                f"{supabase_url}/rest/v1/profiles?user_id=eq.{request.user_id}",
+                data=data,
+                method="PATCH",
+                headers={
+                    "apikey": supabase_key,
+                    "Authorization": f"Bearer {supabase_key}",
+                    "Content-Type": "application/json",
+                    "Prefer": "return=minimal",
+                },
+            )
+            urllib.request.urlopen(req, timeout=5)
+            logger.info(f"Referral kodu kaydedildi: {request.user_id} -> {code}")
+        except Exception as e:
+            logger.warning(f"Referral kodu kaydedilemedi: {e}")
+    
     return {"code": code, "user_id": request.user_id}
 
 
